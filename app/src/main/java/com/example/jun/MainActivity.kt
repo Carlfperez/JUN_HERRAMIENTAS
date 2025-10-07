@@ -1,5 +1,6 @@
 package com.example.jun
 
+import android.app.Application
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -12,14 +13,24 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,18 +39,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.example.jun.ui.theme.JUNTheme
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.compose.material3.OutlinedButton
+import com.example.jun.data.Task
+import com.example.jun.data.TaskStatus
+import com.example.jun.ui.theme.JUNTheme
+import com.example.jun.viewmodel.TaskViewModel
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             JUNTheme {
-                //Navigation setup
                 val navController = rememberNavController()
+                val taskViewModel: TaskViewModel = viewModel(
+                    factory = TaskViewModelFactory(application)
+                )
 
                 NavHost(
                     navController = navController,
@@ -52,7 +70,10 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     composable("tasks") {
-                        TaskListScreen(onBack = { navController.popBackStack() })
+                        TaskListScreen(
+                            viewModel = taskViewModel,
+                            onBack = { navController.popBackStack() }
+                        )
                     }
                     composable("about") {
                         AboutScreen(onBack = { navController.popBackStack() })
@@ -62,15 +83,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-// Data class para representar una tarea con estado
-data class Task(
-    val id: Int,
-    val title: String,
-    val status: TaskStatus
-)
 
-enum class TaskStatus {
-    TODO, IN_PROGRESS, DONE
+class TaskViewModelFactory(private val application: Application) :
+    ViewModelProvider.Factory {
+    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(TaskViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return TaskViewModel(application) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
 }
 
 // Pantalla de Inicio
@@ -127,159 +149,198 @@ fun HomeScreen(
         }
     }
 }
-//Preview para visualizar la pantalla
-@Preview(showBackground = true)
-@Composable
-fun HomeScreenPreview() {
-    MaterialTheme {
-        HomeScreen(
-            onNavigateToTasks = { /* No hacer nada en el preview */ },
-            onNavigateToAbout = { /* No hacer nada en el preview */ }
-        )
-    }
-}
-// TaskListScreen con sistema Kanban
+
+// TaskListScreen actualizado con ViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TaskListScreen(onBack: () -> Unit) {
-    var taskText by remember { mutableStateOf("") }
-    var tasks by remember {
-        mutableStateOf(
-            listOf(
-                Task(1, "Estudiar para el examen", TaskStatus.TODO),
-                Task(2, "Hacer la compra", TaskStatus.IN_PROGRESS),
-                Task(3, "Llamar al médico", TaskStatus.DONE)
-            )
-        )
+fun TaskListScreen(
+    viewModel: TaskViewModel,
+    onBack: () -> Unit
+) {
+    var showAddTaskDialog by remember { mutableStateOf(false) }
+    var searchText by remember { mutableStateOf("") }
+
+    // Observar cambios en búsqueda
+    LaunchedEffect(searchText) {
+        viewModel.setSearchQuery(searchText)
     }
+
+    // Recoger datos del ViewModel
+    val todoTasks by viewModel.todoTasks.collectAsState(initial = emptyList())
+    val inProgressTasks by viewModel.inProgressTasks.collectAsState(initial = emptyList())
+    val doneTasks by viewModel.doneTasks.collectAsState(initial = emptyList())
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // Botón para volver atrás
-        Button(
-            onClick = onBack,
-            modifier = Modifier.padding(bottom = 16.dp)
-        ) {
-            Text("← Volver al Inicio")
-        }
-
-        Text(
-            text = "Tablero Kanban",
-            style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-
-        // TextField para nueva tarea
-        TextField(
-            value = taskText,
-            onValueChange = { newText ->
-                taskText = newText
-            },
-            label = { Text("Nueva tarea...") },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 8.dp)
-        )
-
-        // Botón para agregar tarea
-        Button(
-            onClick = {
-                if (taskText.isNotBlank()) {
-                    val newTask = Task(
-                        id = (tasks.maxOfOrNull { it.id } ?: 0) + 1,
-                        title = taskText,
-                        status = TaskStatus.TODO
-                    )
-                    tasks = tasks + newTask
-                    taskText = ""
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 16.dp)
-        ) {
-            Text("Agregar Tarea a 'Por Hacer'")
-        }
-
-        // Las 3 columnas Kanban
+        // Header
         Row(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // Columna 1: Por Hacer
-            KanbanColumn(
-                title = "Por Hacer",
-                taskCount = tasks.count { it.status == TaskStatus.TODO },
-                tasks = tasks.filter { it.status == TaskStatus.TODO },
-                onTaskClick = { task ->
-                    // Mover a En Progreso
-                    tasks = tasks.map {
-                        if (it.id == task.id) it.copy(status = TaskStatus.IN_PROGRESS)
-                        else it
-                    }
-                },
-                modifier = Modifier.weight(1f),
-                columnColor = MaterialTheme.colorScheme.surfaceVariant
-            )
+            Button(onClick = onBack) {
+                Text("← Inicio")
+            }
 
-            // Columna 2: En Progreso
-            KanbanColumn(
-                title = "En Progreso",
-                taskCount = tasks.count { it.status == TaskStatus.IN_PROGRESS },
-                tasks = tasks.filter { it.status == TaskStatus.IN_PROGRESS },
-                onTaskClick = { task ->
-                    // Mover a Completadas
-                    tasks = tasks.map {
-                        if (it.id == task.id) it.copy(status = TaskStatus.DONE)
-                        else it
-                    }
-                },
-                modifier = Modifier.weight(1f),
-                columnColor = MaterialTheme.colorScheme.primaryContainer
-            )
-
-            // Columna 3: Completadas
-            KanbanColumn(
-                title = "Completadas",
-                taskCount = tasks.count { it.status == TaskStatus.DONE },
-                tasks = tasks.filter { it.status == TaskStatus.DONE },
-                onTaskClick = { task ->
-                    // Eliminar tarea
-                    tasks = tasks.filter { it.id != task.id }
-                },
-                modifier = Modifier.weight(1f),
-                columnColor = MaterialTheme.colorScheme.secondaryContainer
-            )
+            Button(
+                onClick = { showAddTaskDialog = true }
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Agregar")
+                Text("Nueva")
+            }
         }
 
-        // Contador total de tareas
+        // Barra de búsqueda
+        TextField(
+            value = searchText,
+            onValueChange = { searchText = it },
+            label = { Text("Buscar tareas...") },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            leadingIcon = {
+                Icon(Icons.Default.Search, contentDescription = "Buscar")
+            },
+            trailingIcon = {
+                if (searchText.isNotEmpty()) {
+                    IconButton(onClick = { searchText = "" }) {
+                        Icon(Icons.Default.Close, contentDescription = "Limpiar")
+                    }
+                }
+            }
+        )
+
         Text(
-            text = "Total de tareas: ${tasks.size}",
+            text = if (searchText.isEmpty()) "Tablero Kanban" else "Resultados: \"$searchText\"",
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.padding(vertical = 8.dp)
+        )
+
+        // Mostrar resultados de búsqueda o columnas normales
+        if (searchText.isNotEmpty()) {
+            val searchedTasks by viewModel.searchedTasks.collectAsState(initial = emptyList())
+            SearchResultsSection(
+                tasks = searchedTasks,
+                onTaskClick = { task ->
+                    when (task.status) {
+                        TaskStatus.TODO -> viewModel.moveTask(task, TaskStatus.IN_PROGRESS)
+                        TaskStatus.IN_PROGRESS -> viewModel.moveTask(task, TaskStatus.DONE)
+                        TaskStatus.DONE -> viewModel.deleteTask(task)
+                    }
+                },
+                modifier = Modifier.weight(1f)
+            )
+        } else {
+            // Columnas Kanban normales
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                KanbanColumn(
+                    title = "Por Hacer",
+                    tasks = todoTasks,
+                    onTaskClick = { task ->
+                        viewModel.moveTask(task, TaskStatus.IN_PROGRESS)
+                    },
+                    modifier = Modifier.weight(1f),
+                    columnColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+
+                KanbanColumn(
+                    title = "En Progreso",
+                    tasks = inProgressTasks,
+                    onTaskClick = { task ->
+                        viewModel.moveTask(task, TaskStatus.DONE)
+                    },
+                    modifier = Modifier.weight(1f),
+                    columnColor = MaterialTheme.colorScheme.primaryContainer
+                )
+
+                KanbanColumn(
+                    title = "Completadas",
+                    tasks = doneTasks,
+                    onTaskClick = { task ->
+                        viewModel.deleteTask(task)
+                    },
+                    modifier = Modifier.weight(1f),
+                    columnColor = MaterialTheme.colorScheme.secondaryContainer
+                )
+            }
+        }
+
+        // Contador
+        val totalTasks = todoTasks.size + inProgressTasks.size + doneTasks.size
+        Text(
+            text = "Total: $totalTasks tareas",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             modifier = Modifier.padding(top = 8.dp)
         )
+
+        // Diálogo para agregar tarea
+        if (showAddTaskDialog) {
+            SimpleAddTaskDialog(
+                onDismiss = { showAddTaskDialog = false },
+                onAddTask = { title, description ->
+                    if (title.isNotBlank()) {
+                        viewModel.addTask(title, description)
+                    }
+                }
+            )
+        }
+    }
+}
+
+// Sección de resultados de búsqueda
+@Composable
+fun SearchResultsSection(
+    tasks: List<Task>,
+    onTaskClick: (Task) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        if (tasks.isEmpty()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = "No se encontraron tareas",
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
+        } else {
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                items(tasks) { task ->
+                    KanbanTaskCard(
+                        task = task,
+                        onTaskClick = { onTaskClick(task) },
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+            }
+        }
     }
 }
 
 // Composable para cada columna Kanban
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun KanbanColumn(
     title: String,
-    taskCount: Int,
     tasks: List<Task>,
     onTaskClick: (Task) -> Unit,
     modifier: Modifier = Modifier,
     columnColor: androidx.compose.ui.graphics.Color
 ) {
     Column(
-        modifier = modifier
-            .padding(4.dp)
+        modifier = modifier.padding(4.dp)
     ) {
         // Header de la columna
         Card(
@@ -299,7 +360,7 @@ fun KanbanColumn(
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
                 Text(
-                    text = "$taskCount tareas",
+                    text = "${tasks.size} tareas",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
@@ -351,16 +412,79 @@ fun KanbanTaskCard(
 ) {
     Card(
         onClick = onTaskClick,
-        modifier = modifier
-            .fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Text(
-            text = task.title,
-            modifier = Modifier.padding(12.dp),
-            style = MaterialTheme.typography.bodyMedium
-        )
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = task.title,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            if (task.description.isNotBlank()) {
+                Text(
+                    text = task.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
     }
+}
+
+// Diálogo simple para agregar tareas
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SimpleAddTaskDialog(
+    onDismiss: () -> Unit,
+    onAddTask: (String, String) -> Unit
+) {
+    var title by remember { mutableStateOf("") }
+    var description by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Nueva Tarea") },
+        text = {
+            Column {
+                TextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Título *") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                )
+
+                TextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Descripción (opcional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 3
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (title.isNotBlank()) {
+                        onAddTask(title, description)
+                    }
+                },
+                enabled = title.isNotBlank()
+            ) {
+                Text("Agregar")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Cancelar")
+            }
+        }
+    )
 }
 
 // Pantalla Acerca de
@@ -371,7 +495,6 @@ fun AboutScreen(onBack: () -> Unit) {
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // Botón para volver atrás
         Button(
             onClick = onBack,
             modifier = Modifier.padding(bottom = 32.dp)
@@ -445,7 +568,10 @@ fun PreviewHomeScreen() {
 @Composable
 fun PreviewTaskListScreen() {
     JUNTheme {
-        TaskListScreen(onBack = { })
+        // Preview con datos de ejemplo
+        Column(modifier = Modifier.fillMaxSize()) {
+            Text("Tablero Kanban (Preview)")
+        }
     }
 }
 
